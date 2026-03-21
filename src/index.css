@@ -18,6 +18,8 @@
   --color-mode-adversary: #F44336;
   --color-mode-mirror: #9C27B0;
   --color-mode-free: #2196F3;
+  --color-mode-drums: #FF5722;
+  --color-mode-assisted: #00BCD4;
   --font-display: 'Space Grotesk', sans-serif;
   --font-body: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -27,6 +29,10 @@ html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
+}
+
+/* Allow scrolling on mobile */
+html {
   overflow: hidden;
 }
 
@@ -34,33 +40,52 @@ body {
   font-family: var(--font-body);
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
 }
 ::-webkit-scrollbar-track {
   background: var(--color-bg-secondary);
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-text-muted);
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
+/* Slider — bigger touch target on mobile */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  height: 4px;
-  border-radius: 2px;
+  height: 6px;
+  border-radius: 3px;
   background: var(--color-bg-tertiary);
   outline: none;
+  touch-action: none; /* prevent scroll while dragging */
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--color-text-primary);
   cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-text-primary);
+  cursor: pointer;
+  border: none;
+}
+
+/* Safe area insets for mobile notch/gestures */
+@supports (padding: env(safe-area-inset-bottom)) {
+  footer {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
 }

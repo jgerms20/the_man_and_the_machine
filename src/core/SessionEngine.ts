@@ -1,12 +1,14 @@
 import { AudioCapture } from '../audio/AudioCapture';
 import { AudioFeatureExtractor } from '../audio/AudioFeatureExtractor';
 import type { AudioFeatures } from '../audio/types';
+import { MidiInput } from '../audio/MidiInput';
 import { MusicalAnalysisEngine } from '../analysis/MusicalAnalysisEngine';
 import type { MusicalState } from '../analysis/types';
 import { AIDecisionEngine } from '../ai/AIDecisionEngine';
 import type { AIModeName } from '../ai/types';
 import { EffectsChain } from '../synth/EffectsChain';
 import { VoicePool } from '../synth/VoicePool';
+import { DrumEngine } from '../synth/DrumEngine';
 import { getPresetForMode } from '../synth/SynthPresets';
 import { SessionRecorder } from '../session/SessionRecorder';
 import { HighlightDetector } from '../session/HighlightDetector';
@@ -23,13 +25,15 @@ export class SessionEngine {
   private readonly aiEngine: AIDecisionEngine;
   private readonly effectsChain: EffectsChain;
   private readonly voicePool: VoicePool;
+  private readonly drumEngine: DrumEngine;
+  private readonly midiInput: MidiInput;
   private readonly recorder: SessionRecorder;
   private readonly highlightDetector: HighlightDetector;
 
-  // Internal mutable state (mirrors store but avoids closure staleness)
   private _intensity: number = 75;
   private _isRecording: boolean = false;
   private _lastMusicalState: MusicalState | null = null;
+  private _midiCleanup: (() => void) | null = null;
 
   constructor() {
     this.audioCapture = new AudioCapture();
@@ -38,33 +42,32 @@ export class SessionEngine {
     this.aiEngine = new AIDecisionEngine();
     this.effectsChain = new EffectsChain();
     this.voicePool = new VoicePool(this.effectsChain);
-    this.recorder = new SessionRecorder('supportive');
+    this.drumEngine = new DrumEngine();
+    this.midiInput = new MidiInput();
+    this.recorder = new SessionRecorder('assisted');
     this.highlightDetector = new HighlightDetector();
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────────
 
   async start(deviceId?: string): Promise<void> {
-    // Enumerate devices and update store
     const devices = await AudioCapture.getInputDevices();
     useAudioStore.getState().setInputDevices(devices);
 
-    // Start audio capture
     await this.audioCapture.start(deviceId);
-
-    // Ensure Tone.js AudioContext is running (requires user gesture)
     await this.voicePool.ensureStarted();
+    await this.drumEngine.ensureStarted();
 
-    // Apply initial timbre preset
     const initialMode = useSessionStore.getState().aiMode;
     this.voicePool.setTimbre(getPresetForMode(initialMode));
 
-    // Update stores
+    // Start MIDI input (non-blocking — not all browsers support it)
+    this._startMidi();
+
     useAudioStore.getState().setIsListening(true);
     useSessionStore.getState().setIsPlaying(true);
     useSessionStore.getState().setSessionStartTime(Date.now());
 
-    // Start extraction loop — main processing callback runs every 50ms
     this.featureExtractor.start((features: AudioFeatures) => {
       this._onFeatures(features);
     });
@@ -87,34 +90,84 @@ export class SessionEngine {
     useSessionStore.getState().setSessionStartTime(null);
   }
 
+  // ── MIDI ───────────────────────────────────────────────────────────────────
+
+  private _startMidi(): void {
+    if (!this.midiInput.isSupported) return;
+
+    void this.midiInput.start().then((ok) => {
+      useAudioStore.getState().setMidiAvailable(ok);
+      if (ok) {
+        useAudioStore.getState().setMidiDevices(this.midiInput.devices);
+      }
+    });
+
+    // Note callbacks
+    const unsubNote = this.midiInput.onNote((event) => {
+      if (event.velocity > 0) {
+        // Note On — play through synth and update store
+        useAudioStore.getState().setMidiNote(event.note, event.velocity);
+        this.voicePool.playNote(event.note, 0.3, event.velocity / 127);
+      } else {
+        // Note Off
+        useAudioStore.getState().setMidiNote(null, 0);
+      }
+    });
+
+    // CC callbacks — map knobs to intensity/volume
+    const unsubCC = this.midiInput.onCC((event) => {
+      // MPK Mini knobs are typically CC 1-8
+      if (event.controller === 1) {
+        // Knob 1 → AI intensity
+        const val = Math.round((event.value / 127) * 100);
+        this.setIntensity(val);
+      } else if (event.controller === 2) {
+        // Knob 2 → volume
+        const val = Math.round((event.value / 127) * 100);
+        this.setVolume(val);
+      }
+    });
+
+    const unsubDevice = this.midiInput.onDeviceChange((devices) => {
+      useAudioStore.getState().setMidiDevices(devices);
+    });
+
+    this._midiCleanup = () => {
+      unsubNote();
+      unsubCC();
+      unsubDevice();
+      this.midiInput.stop();
+    };
+  }
+
   // ── Main processing loop ─────────────────────────────────────────────────────
 
   private _onFeatures(features: AudioFeatures): void {
-    // 1. Update musical analysis
     const musicalState = this.analysisEngine.update(features);
     this._lastMusicalState = musicalState;
 
-    // 2. AI decision
     const intensityNorm = this._intensity / 100;
     const decision = this.aiEngine.decide(musicalState, features, intensityNorm);
-    // 3. Play notes if we have a decision
+
     const aiIsPlaying = decision !== null && decision.notes.length > 0;
     if (aiIsPlaying) {
-      this.voicePool.playNotes(decision.notes);
+      // Route drum mode notes to the DrumEngine, everything else to VoicePool
+      if (this.aiEngine.isDrumMode) {
+        this.drumEngine.playNotes(decision.notes);
+      } else {
+        this.voicePool.playNotes(decision.notes);
+      }
     }
 
-    // 4. Log to recorder if active
     if (this._isRecording) {
       if (decision) {
         this.recorder.logAIEvent(decision);
       }
-      // Log musical state at a reduced rate (~every 500ms) to avoid bloat
       if (features.timestamp % 500 < 50) {
         this.recorder.logMusicalState(musicalState);
       }
     }
 
-    // 5. Detect highlights
     const highlight = this.highlightDetector.update(
       musicalState,
       features.rms,
@@ -124,7 +177,6 @@ export class SessionEngine {
       this.recorder.addHighlight(highlight);
     }
 
-    // 6. Update stores (drives reactive UI)
     useAudioStore.getState().setFeatures(features);
     useSessionStore.getState().setMusicalState(musicalState);
     useSessionStore.getState().setAiDecision(decision);
@@ -151,16 +203,19 @@ export class SessionEngine {
     useSessionStore.getState().setIntensity(this._intensity);
   }
 
-  /**
-   * Set master output volume. `value` is 0–100 (percentage).
-   * Mapped to dB: 0% = -60 dB (near silence), 100% = 0 dB (unity gain).
-   */
   setVolume(value: number): void {
     const clamped = Math.max(0, Math.min(100, value));
-    // Linear percentage → dB: 0% maps to -60, 100% maps to 0
     const db = clamped === 0 ? -60 : (clamped / 100) * 60 - 60;
     this.effectsChain.setVolume(db);
+    this.drumEngine.setVolume(db);
     useSessionStore.getState().setVolume(clamped);
+  }
+
+  /** Cycle drum pattern (only relevant in drums mode) */
+  nextDrumPattern(): string {
+    const name = this.aiEngine.drumMode.nextPattern();
+    useSessionStore.getState().setDrumPattern(name);
+    return name;
   }
 
   // ── Recording ────────────────────────────────────────────────────────────────
@@ -202,8 +257,6 @@ export class SessionEngine {
   // ── Export ───────────────────────────────────────────────────────────────────
 
   async exportCurrentSession(): Promise<void> {
-    // Build a synthetic SessionData from in-memory state for mid-session export,
-    // or from the last completed recording if one exists.
     const state = useSessionStore.getState();
     const now = Date.now();
     const startTime = state.sessionStartTime ?? now;
@@ -245,7 +298,9 @@ export class SessionEngine {
 
   dispose(): void {
     this.stop();
+    this._midiCleanup?.();
     this.voicePool.dispose();
     this.effectsChain.dispose();
+    this.drumEngine.dispose();
   }
 }

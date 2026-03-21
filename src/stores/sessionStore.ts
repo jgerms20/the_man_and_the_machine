@@ -11,6 +11,7 @@ interface SessionState {
   sessionStartTime: number | null;
   musicalState: MusicalState | null;
   aiDecision: AIDecision | null;
+  drumPattern: string;         // current drum pattern name
 
   setAiMode: (mode: AIModeName) => void;
   setIntensity: (intensity: number) => void;
@@ -20,10 +21,11 @@ interface SessionState {
   setSessionStartTime: (time: number | null) => void;
   setMusicalState: (state: MusicalState | null) => void;
   setAiDecision: (decision: AIDecision | null) => void;
+  setDrumPattern: (pattern: string) => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
-  aiMode: 'supportive',
+  aiMode: 'assisted',
   intensity: 75,
   volume: 50,
   isPlaying: false,
@@ -31,6 +33,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   sessionStartTime: null,
   musicalState: null,
   aiDecision: null,
+  drumPattern: 'rock',
 
   setAiMode: (aiMode) => set({ aiMode }),
   setIntensity: (intensity) => set({ intensity }),
@@ -40,4 +43,5 @@ export const useSessionStore = create<SessionState>((set) => ({
   setSessionStartTime: (sessionStartTime) => set({ sessionStartTime }),
   setMusicalState: (musicalState) => set({ musicalState }),
   setAiDecision: (aiDecision) => set({ aiDecision }),
+  setDrumPattern: (drumPattern) => set({ drumPattern }),
 }));

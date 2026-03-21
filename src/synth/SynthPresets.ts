@@ -40,7 +40,6 @@ const ADVERSARY: SynthParams = {
   delayFeedback: 0.1,
 };
 
-// FM used in a pluck-like configuration: near-zero attack, long decay, low sustain
 const MIRROR: SynthParams = {
   type: 'fm',
   attack: 0.005,
@@ -67,12 +66,43 @@ const FREE: SynthParams = {
   delayFeedback: 0.25,
 };
 
+// Drums mode uses the DrumEngine directly, but we still need a preset
+// for the effects chain (kept neutral / minimal)
+const DRUMS: SynthParams = {
+  type: 'membrane',
+  attack: 0.001,
+  decay: 0.2,
+  sustain: 0.0,
+  release: 0.1,
+  filterFrequency: 8000,
+  filterResonance: 0.5,
+  reverbWet: 0.15,
+  delayTime: 0.0,
+  delayFeedback: 0.0,
+};
+
+// Assisted mode — warm, gentle bass tone
+const ASSISTED: SynthParams = {
+  type: 'fm',
+  attack: 0.15,
+  decay: 0.6,
+  sustain: 0.7,
+  release: 1.2,
+  filterFrequency: 1200,
+  filterResonance: 0.8,
+  reverbWet: 0.5,
+  delayTime: 0.0,
+  delayFeedback: 0.0,
+};
+
 const PRESET_MAP: Record<AIModeName, SynthParams> = {
   supportive: SUPPORTIVE,
   challenger: CHALLENGER,
   adversary: ADVERSARY,
   mirror: MIRROR,
   free: FREE,
+  drums: DRUMS,
+  assisted: ASSISTED,
 };
 
 export function getPresetForMode(mode: AIModeName): SynthParams {
@@ -88,7 +118,6 @@ export function interpolatePresets(
   const lerp = (a: number, b: number): number => a + (b - a) * clampedT;
 
   return {
-    // Use destination type once t > 0.5 for a clean crossover
     type: clampedT < 0.5 ? from.type : to.type,
     attack: lerp(from.attack, to.attack),
     decay: lerp(from.decay, to.decay),

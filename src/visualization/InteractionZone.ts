@@ -11,6 +11,8 @@ const MODE_COLORS: Record<AIModeName, string> = {
   adversary: '#F44336',
   mirror: '#9C27B0',
   free: '#2196F3',
+  drums: '#FF5722',
+  assisted: '#00BCD4',
 };
 
 export class InteractionZone {

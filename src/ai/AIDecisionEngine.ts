@@ -6,9 +6,11 @@ import { ChallengerMode } from './modes/ChallengerMode';
 import { AdversaryMode } from './modes/AdversaryMode';
 import { MirrorMode } from './modes/MirrorMode';
 import { FreeMode } from './modes/FreeMode';
+import { DrumMode } from './modes/DrumMode';
+import { AssistedMode } from './modes/AssistedMode';
 
 /**
- * AIDecisionEngine manages the five personality modes and delegates
+ * AIDecisionEngine manages the personality modes and delegates
  * musical decision-making to the currently active mode.
  */
 export class AIDecisionEngine {
@@ -22,20 +24,26 @@ export class AIDecisionEngine {
       adversary: new AdversaryMode(),
       mirror: new MirrorMode(),
       free: new FreeMode(),
+      drums: new DrumMode(),
+      assisted: new AssistedMode(),
     };
     this.currentModeName = initialMode;
   }
 
-  /**
-   * Returns the currently active mode name.
-   */
   public get activeMode(): AIModeName {
     return this.currentModeName;
   }
 
-  /**
-   * Switch to a different personality mode. Resets the new mode's state.
-   */
+  /** Returns true if the current mode is the drum mode. */
+  public get isDrumMode(): boolean {
+    return this.currentModeName === 'drums';
+  }
+
+  /** Access the drum mode for pattern control. */
+  public get drumMode(): DrumMode {
+    return this.modes.drums as DrumMode;
+  }
+
   public setMode(mode: AIModeName): void {
     if (mode !== this.currentModeName) {
       this.currentModeName = mode;
@@ -43,10 +51,6 @@ export class AIDecisionEngine {
     }
   }
 
-  /**
-   * Make a musical decision based on the current analysis state and audio features.
-   * Returns null if the AI chooses not to play (e.g., silence, capturing in mirror mode).
-   */
   public decide(
     state: MusicalState,
     features: AudioFeatures,
@@ -56,18 +60,12 @@ export class AIDecisionEngine {
     return this.modes[this.currentModeName].decide(state, features, clampedIntensity);
   }
 
-  /**
-   * Reset all modes to their initial state.
-   */
   public reset(): void {
     for (const mode of Object.values(this.modes)) {
       mode.reset();
     }
   }
 
-  /**
-   * Reset only the currently active mode.
-   */
   public resetCurrentMode(): void {
     this.modes[this.currentModeName].reset();
   }
