@@ -96,6 +96,9 @@ const ASSISTED: SynthParams = {
 };
 
 const PRESET_MAP: Record<AIModeName, SynthParams> = {
+  listen: ASSISTED,    // passive — not used for audio
+  interpret: ASSISTED, // passive — not used for audio
+  suggest: ASSISTED,   // passive — not used for audio
   supportive: SUPPORTIVE,
   challenger: CHALLENGER,
   adversary: ADVERSARY,

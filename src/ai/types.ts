@@ -1,7 +1,7 @@
 import type { MusicalState } from '../analysis/types';
 import type { AudioFeatures } from '../audio/types';
 
-export type AIModeName = 'supportive' | 'challenger' | 'adversary' | 'mirror' | 'free' | 'drums' | 'assisted';
+export type AIModeName = 'listen' | 'supportive' | 'challenger' | 'adversary' | 'mirror' | 'free' | 'drums' | 'assisted' | 'interpret' | 'suggest';
 
 export interface NoteEvent {
   pitch: number;      // MIDI note

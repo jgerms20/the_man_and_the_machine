@@ -3,6 +3,7 @@ import { AudioFeatureExtractor } from '../audio/AudioFeatureExtractor';
 import type { AudioFeatures } from '../audio/types';
 import { MidiInput } from '../audio/MidiInput';
 import { MusicalAnalysisEngine } from '../analysis/MusicalAnalysisEngine';
+import { ChordDetector } from '../analysis/ChordDetector';
 import type { MusicalState } from '../analysis/types';
 import { AIDecisionEngine } from '../ai/AIDecisionEngine';
 import type { AIModeName } from '../ai/types';
@@ -22,6 +23,7 @@ export class SessionEngine {
   private readonly audioCapture: AudioCapture;
   private readonly featureExtractor: AudioFeatureExtractor;
   private readonly analysisEngine: MusicalAnalysisEngine;
+  private readonly chordDetector: ChordDetector;
   private readonly aiEngine: AIDecisionEngine;
   private readonly effectsChain: EffectsChain;
   private readonly voicePool: VoicePool;
@@ -31,6 +33,7 @@ export class SessionEngine {
   private readonly highlightDetector: HighlightDetector;
 
   private _intensity: number = 75;
+  private _aiEnabled: boolean = false;
   private _isRecording: boolean = false;
   private _lastMusicalState: MusicalState | null = null;
   private _midiCleanup: (() => void) | null = null;
@@ -39,13 +42,22 @@ export class SessionEngine {
     this.audioCapture = new AudioCapture();
     this.featureExtractor = new AudioFeatureExtractor(this.audioCapture);
     this.analysisEngine = new MusicalAnalysisEngine();
-    this.aiEngine = new AIDecisionEngine();
+    this.chordDetector = new ChordDetector();
+    this.aiEngine = new AIDecisionEngine('listen');
     this.effectsChain = new EffectsChain();
     this.voicePool = new VoicePool(this.effectsChain);
     this.drumEngine = new DrumEngine();
     this.midiInput = new MidiInput();
-    this.recorder = new SessionRecorder('assisted');
+    this.recorder = new SessionRecorder('listen');
     this.highlightDetector = new HighlightDetector();
+
+    // Wire callbacks for interpret and suggest modes
+    this.aiEngine.interpretMode.setCallback((text) => {
+      useSessionStore.getState().setInterpretText(text);
+    });
+    this.aiEngine.suggestMode.setCallback((data) => {
+      useSessionStore.getState().setSuggestData(data);
+    });
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────────
@@ -60,6 +72,9 @@ export class SessionEngine {
 
     const initialMode = useSessionStore.getState().aiMode;
     this.voicePool.setTimbre(getPresetForMode(initialMode));
+
+    // Sync AI enabled state
+    this._aiEnabled = useSessionStore.getState().aiEnabled;
 
     // Start MIDI input (non-blocking — not all browsers support it)
     this._startMidi();
@@ -88,6 +103,9 @@ export class SessionEngine {
     useSessionStore.getState().setMusicalState(null);
     useSessionStore.getState().setAiDecision(null);
     useSessionStore.getState().setSessionStartTime(null);
+    useSessionStore.getState().setDetectedChord(null);
+    useSessionStore.getState().setInterpretText('');
+    useSessionStore.getState().setSuggestData(null);
   }
 
   // ── MIDI ───────────────────────────────────────────────────────────────────
@@ -146,8 +164,18 @@ export class SessionEngine {
     const musicalState = this.analysisEngine.update(features);
     this._lastMusicalState = musicalState;
 
+    // Always run chord detection regardless of mode
+    const chord = this.chordDetector.update(features.midiNote, features.rms);
+    useSessionStore.getState().setDetectedChord(chord);
+
     const intensityNorm = this._intensity / 100;
-    const decision = this.aiEngine.decide(musicalState, features, intensityNorm);
+
+    // For passive modes (listen/interpret/suggest), always run decide() so callbacks fire.
+    // For AI modes, only run if aiEnabled.
+    const shouldDecide = this.aiEngine.isPassiveMode || this._aiEnabled;
+    const decision = shouldDecide
+      ? this.aiEngine.decide(musicalState, features, intensityNorm)
+      : null;
 
     const aiIsPlaying = decision !== null && decision.notes.length > 0;
     if (aiIsPlaying) {
@@ -189,13 +217,34 @@ export class SessionEngine {
     if (prev === mode) return;
 
     this.aiEngine.setMode(mode);
-    this.voicePool.setTimbre(getPresetForMode(mode));
+
+    // Only set voice timbre for AI modes that produce sound
+    if (!this.aiEngine.isPassiveMode) {
+      this.voicePool.setTimbre(getPresetForMode(mode));
+    }
+
+    // Clear chord detector when switching modes
+    this.chordDetector.reset();
 
     if (this._isRecording) {
       this.recorder.logModeChange(prev, mode);
     }
 
     useSessionStore.getState().setAiMode(mode);
+
+    // Auto-enable AI when switching to an AI mode
+    const isPassive = mode === 'listen' || mode === 'interpret' || mode === 'suggest';
+    if (!isPassive && !this._aiEnabled) {
+      // Don't auto-enable — let the user toggle intentionally
+    }
+
+    // Clear interpret/suggest state when leaving those modes
+    if (mode !== 'interpret') {
+      useSessionStore.getState().setInterpretText('');
+    }
+    if (mode !== 'suggest') {
+      useSessionStore.getState().setSuggestData(null);
+    }
   }
 
   setIntensity(value: number): void {
@@ -209,6 +258,18 @@ export class SessionEngine {
     this.effectsChain.setVolume(db);
     this.drumEngine.setVolume(db);
     useSessionStore.getState().setVolume(clamped);
+  }
+
+  setAiEnabled(enabled: boolean): void {
+    this._aiEnabled = enabled;
+    if (!enabled) {
+      this.voicePool.stopAll();
+    }
+    useSessionStore.getState().setAiEnabled(enabled);
+  }
+
+  toggleAiEnabled(): void {
+    this.setAiEnabled(!this._aiEnabled);
   }
 
   /** Cycle drum pattern (only relevant in drums mode) */

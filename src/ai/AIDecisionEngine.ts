@@ -8,6 +8,9 @@ import { MirrorMode } from './modes/MirrorMode';
 import { FreeMode } from './modes/FreeMode';
 import { DrumMode } from './modes/DrumMode';
 import { AssistedMode } from './modes/AssistedMode';
+import { ListenMode } from './modes/ListenMode';
+import { InterpretMode } from './modes/InterpretMode';
+import { SuggestMode } from './modes/SuggestMode';
 
 /**
  * AIDecisionEngine manages the personality modes and delegates
@@ -17,8 +20,11 @@ export class AIDecisionEngine {
   private modes: Record<AIModeName, AIMode>;
   private currentModeName: AIModeName;
 
-  constructor(initialMode: AIModeName = 'supportive') {
+  constructor(initialMode: AIModeName = 'listen') {
     this.modes = {
+      listen: new ListenMode(),
+      interpret: new InterpretMode(),
+      suggest: new SuggestMode(),
       supportive: new SupportiveMode(),
       challenger: new ChallengerMode(),
       adversary: new AdversaryMode(),
@@ -42,6 +48,23 @@ export class AIDecisionEngine {
   /** Access the drum mode for pattern control. */
   public get drumMode(): DrumMode {
     return this.modes.drums as DrumMode;
+  }
+
+  /** Access the interpret mode to register callback. */
+  public get interpretMode(): InterpretMode {
+    return this.modes.interpret as InterpretMode;
+  }
+
+  /** Access the suggest mode to register callback. */
+  public get suggestMode(): SuggestMode {
+    return this.modes.suggest as SuggestMode;
+  }
+
+  /** Modes that produce no audio output */
+  public get isPassiveMode(): boolean {
+    return this.currentModeName === 'listen' ||
+      this.currentModeName === 'interpret' ||
+      this.currentModeName === 'suggest';
   }
 
   public setMode(mode: AIModeName): void {

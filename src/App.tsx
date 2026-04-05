@@ -13,15 +13,22 @@ import { SessionInfo } from './components/SessionInfo';
 import { TransportControls } from './components/TransportControls';
 import { Visualization } from './components/Visualization';
 import { BassFretboard } from './components/BassFretboard';
+import { ChordDisplay } from './components/ChordDisplay';
+import { HarmonyPanel } from './components/HarmonyPanel';
 import type { AIModeName } from './ai/types';
 
-const AI_MODES: AIModeName[] = ['assisted', 'drums', 'supportive', 'challenger', 'adversary', 'mirror', 'free'];
+const AI_MODES: AIModeName[] = [
+  'listen', 'interpret', 'suggest',
+  'assisted', 'drums', 'supportive',
+  'challenger', 'adversary', 'mirror', 'free',
+];
 
 export function App() {
   const engineRef = useRef<SessionEngine | null>(null);
 
   const [sessionStarted, setSessionStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showHarmony, setShowHarmony] = useState(false);
 
   // Audio store
   const features        = useAudioStore((s) => s.features);
@@ -32,15 +39,19 @@ export function App() {
   const midiNote        = useAudioStore((s) => s.midiNote);
 
   // Session store
-  const aiMode            = useSessionStore((s) => s.aiMode);
-  const intensity         = useSessionStore((s) => s.intensity);
-  const volume            = useSessionStore((s) => s.volume);
-  const isPlaying         = useSessionStore((s) => s.isPlaying);
-  const isRecording       = useSessionStore((s) => s.isRecording);
-  const sessionStartTime  = useSessionStore((s) => s.sessionStartTime);
-  const musicalState      = useSessionStore((s) => s.musicalState);
-  const aiDecision        = useSessionStore((s) => s.aiDecision);
-  const drumPattern       = useSessionStore((s) => s.drumPattern);
+  const aiMode          = useSessionStore((s) => s.aiMode);
+  const intensity       = useSessionStore((s) => s.intensity);
+  const volume          = useSessionStore((s) => s.volume);
+  const isPlaying       = useSessionStore((s) => s.isPlaying);
+  const isRecording     = useSessionStore((s) => s.isRecording);
+  const sessionStartTime = useSessionStore((s) => s.sessionStartTime);
+  const musicalState    = useSessionStore((s) => s.musicalState);
+  const aiDecision      = useSessionStore((s) => s.aiDecision);
+  const drumPattern     = useSessionStore((s) => s.drumPattern);
+  const aiEnabled       = useSessionStore((s) => s.aiEnabled);
+  const detectedChord   = useSessionStore((s) => s.detectedChord);
+  const interpretText   = useSessionStore((s) => s.interpretText);
+  const suggestData     = useSessionStore((s) => s.suggestData);
 
   // Derived
   const harmonicTension = musicalState?.harmonicTension ?? 0;
@@ -48,6 +59,12 @@ export function App() {
   const tempo           = features?.tempo ?? 0;
   const detectedKey     = musicalState?.key ?? '';
   const detectedMode    = musicalState?.mode ?? '';
+
+  // Whether current mode is a passive (listen) mode
+  const isPassiveMode = aiMode === 'listen' || aiMode === 'interpret' || aiMode === 'suggest';
+
+  // Show harmony panel for suggest mode or when button pressed
+  const isHarmonyVisible = showHarmony || aiMode === 'suggest';
 
   // ── Session start ──────────────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
@@ -106,6 +123,10 @@ export function App() {
     engineRef.current?.setMode(mode);
   }, []);
 
+  const handleAiToggle = useCallback(() => {
+    engineRef.current?.toggleAiEnabled();
+  }, []);
+
   const handleIntensityChange = useCallback((value: number) => {
     engineRef.current?.setIntensity(value);
   }, []);
@@ -141,6 +162,11 @@ export function App() {
           e.preventDefault();
           handleRecord();
           break;
+        case 'a':
+        case 'A':
+          e.preventDefault();
+          handleAiToggle();
+          break;
         case '1': handleModeChange(AI_MODES[0]!); break;
         case '2': handleModeChange(AI_MODES[1]!); break;
         case '3': handleModeChange(AI_MODES[2]!); break;
@@ -148,9 +174,11 @@ export function App() {
         case '5': handleModeChange(AI_MODES[4]!); break;
         case '6': handleModeChange(AI_MODES[5]!); break;
         case '7': handleModeChange(AI_MODES[6]!); break;
+        case '8': handleModeChange(AI_MODES[7]!); break;
+        case '9': handleModeChange(AI_MODES[8]!); break;
+        case '0': handleModeChange(AI_MODES[9]!); break;
         case 'd':
         case 'D':
-          // Cycle drum pattern
           if (aiMode === 'drums') {
             handleNextDrumPattern();
           }
@@ -160,7 +188,7 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [sessionStarted, isPlaying, aiMode, handlePlay, handlePause, handleRecord, handleModeChange, handleNextDrumPattern]);
+  }, [sessionStarted, isPlaying, aiMode, handlePlay, handlePause, handleRecord, handleAiToggle, handleModeChange, handleNextDrumPattern]);
 
   // ── Cleanup on unmount ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -210,7 +238,9 @@ export function App() {
           className="mt-12 text-[#2A2A35] text-xs tracking-[0.25em] uppercase select-none text-center leading-relaxed"
           style={{ fontFamily: 'var(--font-body)' }}
         >
-          Space · Play/Pause &nbsp;&nbsp; R · Record &nbsp;&nbsp; 1–7 · AI Modes
+          Starts in Listen mode — detects chords automatically
+          <br />
+          A · AI On/Off &nbsp;&nbsp; Space · Play/Pause &nbsp;&nbsp; R · Record
           <br />
           Supports mic input, MIDI controllers (Akai MPK Mini), &amp; 5-string bass
         </p>
@@ -269,8 +299,8 @@ export function App() {
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="flex flex-col min-h-0">
 
-          {/* Visualization — takes priority */}
-          <section className="w-full" style={{ minHeight: '180px', maxHeight: '35vh' }}>
+          {/* Visualization */}
+          <section className="w-full" style={{ minHeight: '160px', maxHeight: '28vh' }}>
             <Visualization
               humanFeatures={features}
               aiDecision={aiDecision}
@@ -280,6 +310,30 @@ export function App() {
               isActive={isPlaying}
             />
           </section>
+
+          {/* Chord Display — always visible, prominent */}
+          <section className="px-3 sm:px-5 pt-3">
+            <ChordDisplay
+              chord={detectedChord}
+              noteName={features?.noteName ?? ''}
+              musicalKey={detectedKey}
+              musicalMode={detectedMode}
+              interpretText={aiMode === 'interpret' ? interpretText : undefined}
+            />
+          </section>
+
+          {/* Harmony panel — shown for suggest mode or when toggled */}
+          {isHarmonyVisible && (
+            <section className="px-3 sm:px-5 pt-2">
+              <HarmonyPanel
+                suggestData={suggestData}
+                chord={detectedChord}
+                musicalKey={detectedKey}
+                musicalMode={detectedMode}
+                isVisible={isHarmonyVisible}
+              />
+            </section>
+          )}
 
           {/* Bass Fretboard */}
           <section className="px-3 sm:px-5 pt-3">
@@ -291,7 +345,7 @@ export function App() {
             />
           </section>
 
-          {/* Info panels — side by side on desktop, stacked on mobile */}
+          {/* Info panels */}
           <section className="px-3 sm:px-5 pt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
 
             {/* Human side */}
@@ -315,17 +369,32 @@ export function App() {
               </span>
               <div className="bg-[#12121A] border border-[#1A1A25] rounded-lg p-4 flex flex-col gap-3">
 
-                {/* Current mode */}
+                {/* Mode + AI status */}
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase tracking-widest text-[#444444]" style={{ fontFamily: 'var(--font-body)' }}>
                     Mode
                   </span>
-                  <span className="text-sm font-semibold capitalize text-[#4A9FD4]" style={{ fontFamily: 'var(--font-display)' }}>
-                    {aiMode}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold capitalize text-[#4A9FD4]" style={{ fontFamily: 'var(--font-display)' }}>
+                      {aiMode}
+                    </span>
+                    {!isPassiveMode && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          backgroundColor: aiEnabled ? '#4A9FD422' : '#1A1A25',
+                          color: aiEnabled ? '#4A9FD4' : '#444455',
+                          border: `1px solid ${aiEnabled ? '#4A9FD4' : '#2A2A35'}`,
+                        }}
+                      >
+                        {aiEnabled ? 'ON' : 'OFF'}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {/* Drum pattern indicator */}
+                {/* Drum pattern */}
                 {aiMode === 'drums' && (
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] uppercase tracking-widest text-[#444444]" style={{ fontFamily: 'var(--font-body)' }}>
@@ -340,6 +409,20 @@ export function App() {
                     </button>
                   </div>
                 )}
+
+                {/* Harmony toggle button */}
+                <button
+                  onClick={() => setShowHarmony((v) => !v)}
+                  className="text-[10px] uppercase tracking-widest px-2 py-1.5 rounded border transition-colors cursor-pointer focus:outline-none text-left"
+                  style={{
+                    fontFamily: 'var(--font-body)',
+                    backgroundColor: isHarmonyVisible ? '#FFD54F14' : 'transparent',
+                    borderColor: isHarmonyVisible ? '#FFD54F55' : '#2A2A35',
+                    color: isHarmonyVisible ? '#FFD54F' : '#444455',
+                  }}
+                >
+                  {isHarmonyVisible ? '▾ Hide harmony' : '▸ Show harmony / suggestions'}
+                </button>
 
                 {/* Tension */}
                 <div className="flex flex-col gap-1">
@@ -363,21 +446,25 @@ export function App() {
                   </div>
                 </div>
 
-                {/* Last AI notes */}
-                <div className="border-t border-[#1A1A25] pt-2 flex flex-col gap-1">
-                  <span className="text-[10px] uppercase tracking-widest text-[#444444]" style={{ fontFamily: 'var(--font-body)' }}>Last Notes</span>
-                  {aiDecision && aiDecision.notes.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {aiDecision.notes.map((n, i) => (
-                        <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-[#4A9FD418] border border-[#4A9FD444] text-[#4A9FD4]" style={{ fontFamily: 'var(--font-mono)' }}>
-                          {n.pitch}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-[#2E2E3E] text-xs" style={{ fontFamily: 'var(--font-mono)' }}>—</span>
-                  )}
-                </div>
+                {/* Last AI notes (only for sound modes) */}
+                {!isPassiveMode && (
+                  <div className="border-t border-[#1A1A25] pt-2 flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-widest text-[#444444]" style={{ fontFamily: 'var(--font-body)' }}>Last Notes</span>
+                    {aiDecision && aiDecision.notes.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {aiDecision.notes.map((n, i) => (
+                          <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-[#4A9FD418] border border-[#4A9FD444] text-[#4A9FD4]" style={{ fontFamily: 'var(--font-mono)' }}>
+                            {n.pitch}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[#2E2E3E] text-xs" style={{ fontFamily: 'var(--font-mono)' }}>
+                        {aiEnabled ? '—' : 'AI off'}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* MIDI controller note */}
                 {midiNote !== null && (
@@ -400,14 +487,21 @@ export function App() {
       {/* ── Controls footer (sticky bottom) ── */}
       <footer className="flex-none border-t border-[#12121A] bg-[#0D0D15] px-3 sm:px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 flex flex-col gap-2.5">
 
-        {/* Mode selector */}
-        <ModeSelector currentMode={aiMode} onModeChange={handleModeChange} />
+        {/* Mode selector (collapsible) */}
+        <ModeSelector
+          currentMode={aiMode}
+          onModeChange={handleModeChange}
+          aiEnabled={aiEnabled}
+          onAiToggle={handleAiToggle}
+        />
 
-        {/* Sliders — larger touch targets */}
-        <div className="grid grid-cols-2 gap-4">
-          <IntensitySlider value={intensity} onChange={handleIntensityChange} />
-          <VolumeSlider value={volume} onChange={handleVolumeChange} />
-        </div>
+        {/* Sliders — only show for AI modes with audio output */}
+        {!isPassiveMode && (
+          <div className="grid grid-cols-2 gap-4">
+            <IntensitySlider value={intensity} onChange={handleIntensityChange} />
+            <VolumeSlider value={volume} onChange={handleVolumeChange} />
+          </div>
+        )}
 
         {/* Session info + transport */}
         <div className="flex flex-row items-center justify-between gap-2 flex-wrap">

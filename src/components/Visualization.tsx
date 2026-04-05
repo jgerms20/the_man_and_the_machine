@@ -8,6 +8,9 @@ import { InteractionZone } from '../visualization/InteractionZone';
 const HUMAN_COLOR = '#D4A574';
 const AI_COLOR = '#4A9FD4';
 const MODE_COLORS: Record<AIModeName, string> = {
+  listen: '#78909C',
+  interpret: '#80CBC4',
+  suggest: '#FFD54F',
   supportive: '#4CAF50',
   challenger: '#FF9800',
   adversary: '#F44336',
