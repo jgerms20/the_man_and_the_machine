@@ -1,7 +1,8 @@
-import { type FC } from 'react';
+import { useState, type FC } from 'react';
 import type { SuggestData } from '../ai/modes/SuggestMode';
 import type { DetectedChord } from '../analysis/ChordDetector';
 import { getCircleOfFifthsSuggestions } from '../analysis/ChordDetector';
+import { CircleOfFifths } from './CircleOfFifths';
 
 interface HarmonyPanelProps {
   suggestData: SuggestData | null;
@@ -18,18 +19,17 @@ export const HarmonyPanel: FC<HarmonyPanelProps> = ({
   musicalMode,
   isVisible,
 }) => {
+  const [collapsed, setCollapsed] = useState(false);
+
   if (!isVisible) return null;
 
-  // If we have a detected chord use its data, otherwise fall back to key
   const hasSuggest = suggestData !== null;
-  const hasChord = chord && chord.confidence > 0.35;
+  const hasChord = chord !== null && chord.confidence > 0.35;
 
   // Derive suggestions from chord if no suggestData
+  const NOTE_LIST = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   const cofData = hasChord
-    ? getCircleOfFifthsSuggestions(
-        ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'].indexOf(chord.root),
-        chord.quality,
-      )
+    ? getCircleOfFifthsSuggestions(NOTE_LIST.indexOf(chord.root), chord.quality)
     : null;
 
   const compatible = suggestData?.compatible ?? cofData?.adjacent ?? [];
@@ -53,102 +53,128 @@ export const HarmonyPanel: FC<HarmonyPanelProps> = ({
   return (
     <div className="flex flex-col gap-2 px-4 py-3 bg-[#0D0D18] rounded-xl border border-[#1A1A2E]">
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-widest text-[#555555]"
-              style={{ fontFamily: 'var(--font-body)' }}>
-          Harmony Guide
-        </span>
+      {/* Header — collapsible */}
+      <button
+        onClick={() => setCollapsed((v) => !v)}
+        className="flex items-center justify-between w-full cursor-pointer focus:outline-none"
+      >
+        <div className="flex items-center gap-1.5">
+          <svg
+            xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+            fill="none" stroke="#555555" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          <span className="text-[10px] uppercase tracking-widest text-[#555555]"
+                style={{ fontFamily: 'var(--font-body)' }}>
+            Harmony Guide
+          </span>
+        </div>
         {circleLabel && (
           <span className="text-[10px] text-[#4A9FD4]"
                 style={{ fontFamily: 'var(--font-mono)' }}>
             {circleLabel}
           </span>
         )}
-      </div>
+      </button>
 
-      {/* Scale notes */}
-      {scaleNotes.length > 0 && (
-        <div>
-          <span className="text-[9px] uppercase tracking-widest text-[#333344] block mb-1"
-                style={{ fontFamily: 'var(--font-body)' }}>
-            Scale
-          </span>
-          <div className="flex flex-wrap gap-1">
-            {scaleNotes.map((note) => (
-              <span
-                key={note}
-                className="text-[11px] px-2 py-0.5 rounded bg-[#D4A57414] border border-[#D4A57440] text-[#D4A574]"
-                style={{ fontFamily: 'var(--font-mono)' }}
-              >
-                {note}
-              </span>
-            ))}
+      {!collapsed && (
+        <>
+          {/* Circle of fifths diagram */}
+          <div className="flex justify-center py-1">
+            <CircleOfFifths
+              activeKey={musicalKey || (hasChord ? chord.root : '')}
+              activeMode={musicalMode || (hasChord && chord.quality.startsWith('m') ? 'minor' : 'major')}
+              highlightedKeys={compatible}
+              size={200}
+            />
           </div>
-        </div>
-      )}
 
-      {/* Compatible chords */}
-      {compatible.length > 0 && (
-        <div>
-          <span className="text-[9px] uppercase tracking-widest text-[#333344] block mb-1"
-                style={{ fontFamily: 'var(--font-body)' }}>
-            Works with
-          </span>
-          <div className="flex flex-wrap gap-1">
-            {compatible.slice(0, 6).map((ch) => (
-              <span
-                key={ch}
-                className="text-[11px] px-2 py-0.5 rounded bg-[#4A9FD414] border border-[#4A9FD440] text-[#4A9FD4]"
-                style={{ fontFamily: 'var(--font-mono)' }}
-              >
-                {ch}
+          {/* Scale notes */}
+          {scaleNotes.length > 0 && (
+            <div>
+              <span className="text-[9px] uppercase tracking-widest text-[#333344] block mb-1"
+                    style={{ fontFamily: 'var(--font-body)' }}>
+                Scale
               </span>
-            ))}
-          </div>
-        </div>
-      )}
+              <div className="flex flex-wrap gap-1">
+                {scaleNotes.map((note) => (
+                  <span
+                    key={note}
+                    className="text-[11px] px-2 py-0.5 rounded bg-[#D4A57414] border border-[#D4A57440] text-[#D4A574]"
+                    style={{ fontFamily: 'var(--font-mono)' }}
+                  >
+                    {note}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {/* Color tones */}
-      {colorNotes.length > 0 && (
-        <div>
-          <span className="text-[9px] uppercase tracking-widest text-[#333344] block mb-1"
-                style={{ fontFamily: 'var(--font-body)' }}>
-            Color tones
-          </span>
-          <div className="flex flex-wrap gap-1">
-            {colorNotes.map((note) => (
-              <span
-                key={note}
-                className="text-[11px] px-2 py-0.5 rounded bg-[#9C27B014] border border-[#9C27B040] text-[#CE93D8]"
-                style={{ fontFamily: 'var(--font-mono)' }}
-              >
-                {note}
+          {/* Compatible chords */}
+          {compatible.length > 0 && (
+            <div>
+              <span className="text-[9px] uppercase tracking-widest text-[#333344] block mb-1"
+                    style={{ fontFamily: 'var(--font-body)' }}>
+                Works with
               </span>
-            ))}
-          </div>
-        </div>
-      )}
+              <div className="flex flex-wrap gap-1">
+                {compatible.slice(0, 6).map((ch) => (
+                  <span
+                    key={ch}
+                    className="text-[11px] px-2 py-0.5 rounded bg-[#4A9FD414] border border-[#4A9FD440] text-[#4A9FD4]"
+                    style={{ fontFamily: 'var(--font-mono)' }}
+                  >
+                    {ch}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {/* Chord progressions */}
-      {nextChords.length > 0 && (
-        <div className="border-t border-[#1A1A2E] pt-2">
-          <span className="text-[9px] uppercase tracking-widest text-[#333344] block mb-1"
-                style={{ fontFamily: 'var(--font-body)' }}>
-            Try these progressions
-          </span>
-          <div className="flex flex-col gap-1">
-            {nextChords.slice(0, 2).map((prog) => (
-              <span
-                key={prog}
-                className="text-[10px] text-[#555566]"
-                style={{ fontFamily: 'var(--font-mono)' }}
-              >
-                {prog}
+          {/* Color tones */}
+          {colorNotes.length > 0 && (
+            <div>
+              <span className="text-[9px] uppercase tracking-widest text-[#333344] block mb-1"
+                    style={{ fontFamily: 'var(--font-body)' }}>
+                Color tones
               </span>
-            ))}
-          </div>
-        </div>
+              <div className="flex flex-wrap gap-1">
+                {colorNotes.map((note) => (
+                  <span
+                    key={note}
+                    className="text-[11px] px-2 py-0.5 rounded bg-[#9C27B014] border border-[#9C27B040] text-[#CE93D8]"
+                    style={{ fontFamily: 'var(--font-mono)' }}
+                  >
+                    {note}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Chord progressions */}
+          {nextChords.length > 0 && (
+            <div className="border-t border-[#1A1A2E] pt-2">
+              <span className="text-[9px] uppercase tracking-widest text-[#333344] block mb-1"
+                    style={{ fontFamily: 'var(--font-body)' }}>
+                Try these progressions
+              </span>
+              <div className="flex flex-col gap-1">
+                {nextChords.slice(0, 2).map((prog) => (
+                  <span
+                    key={prog}
+                    className="text-[10px] text-[#555566]"
+                    style={{ fontFamily: 'var(--font-mono)' }}
+                  >
+                    {prog}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

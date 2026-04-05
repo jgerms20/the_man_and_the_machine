@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import './index.css';
 import { SessionEngine } from './core/SessionEngine';
 import { useAudioStore } from './stores/audioStore';
@@ -23,12 +23,15 @@ const AI_MODES: AIModeName[] = [
   'challenger', 'adversary', 'mirror', 'free',
 ];
 
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
 export function App() {
   const engineRef = useRef<SessionEngine | null>(null);
 
   const [sessionStarted, setSessionStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHarmony, setShowHarmony] = useState(false);
+  const [showVisualization, setShowVisualization] = useState(true);
 
   // Audio store
   const features        = useAudioStore((s) => s.features);
@@ -60,11 +63,22 @@ export function App() {
   const detectedKey     = musicalState?.key ?? '';
   const detectedMode    = musicalState?.mode ?? '';
 
-  // Whether current mode is a passive (listen) mode
   const isPassiveMode = aiMode === 'listen' || aiMode === 'interpret' || aiMode === 'suggest';
-
-  // Show harmony panel for suggest mode or when button pressed
   const isHarmonyVisible = showHarmony || aiMode === 'suggest';
+
+  // Compute suggested notes for fretboard from suggest data or chord
+  const suggestedNotes = useMemo(() => {
+    if (suggestData?.scaleNotes && suggestData.scaleNotes.length > 0) {
+      // Convert note names to MIDI pitch classes
+      return suggestData.scaleNotes
+        .map((name) => NOTE_NAMES.indexOf(name))
+        .filter((pc) => pc >= 0);
+    }
+    if (detectedChord && detectedChord.confidence > 0.35) {
+      return detectedChord.pitchClasses;
+    }
+    return [];
+  }, [suggestData, detectedChord]);
 
   // ── Session start ──────────────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
@@ -167,6 +181,10 @@ export function App() {
           e.preventDefault();
           handleAiToggle();
           break;
+        case 'v':
+        case 'V':
+          setShowVisualization((v) => !v);
+          break;
         case '1': handleModeChange(AI_MODES[0]!); break;
         case '2': handleModeChange(AI_MODES[1]!); break;
         case '3': handleModeChange(AI_MODES[2]!); break;
@@ -240,7 +258,7 @@ export function App() {
         >
           Starts in Listen mode — detects chords automatically
           <br />
-          A · AI On/Off &nbsp;&nbsp; Space · Play/Pause &nbsp;&nbsp; R · Record
+          A · AI On/Off &nbsp;&nbsp; V · Toggle Viz &nbsp;&nbsp; Space · Play/Pause &nbsp;&nbsp; R · Record
           <br />
           Supports mic input, MIDI controllers (Akai MPK Mini), &amp; 5-string bass
         </p>
@@ -248,11 +266,11 @@ export function App() {
     );
   }
 
-  // ── Session UI (mobile-friendly, scrollable) ──────────────────────────────
+  // ── Session UI ─────────────────────────────────────────────────────────────
   return (
     <div className="h-[100dvh] flex flex-col bg-[#0A0A0F] text-[#E0E0E0]">
 
-      {/* ── Header (compact) ── */}
+      {/* ── Header ── */}
       <header className="flex-none flex items-center justify-between px-3 sm:px-5 py-2 border-b border-[#12121A] bg-[#0D0D15]">
         <div className="flex items-center gap-3">
           <h1
@@ -274,6 +292,20 @@ export function App() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Viz toggle */}
+          <button
+            onClick={() => setShowVisualization((v) => !v)}
+            className="text-[10px] px-2 py-1 rounded border transition-colors cursor-pointer focus:outline-none"
+            style={{
+              fontFamily: 'var(--font-mono)',
+              backgroundColor: showVisualization ? '#4A9FD418' : 'transparent',
+              borderColor: showVisualization ? '#4A9FD444' : '#2A2A35',
+              color: showVisualization ? '#4A9FD4' : '#555555',
+            }}
+          >
+            VIZ
+          </button>
+
           <div className="hidden sm:block w-48">
             <InputDeviceSelector
               devices={inputDevices}
@@ -282,7 +314,6 @@ export function App() {
             />
           </div>
 
-          {/* MIDI indicator */}
           {midiAvailable && midiDevices.length > 0 && (
             <span
               className="text-[10px] px-2 py-1 rounded bg-[#4A9FD418] border border-[#4A9FD444] text-[#4A9FD4]"
@@ -299,17 +330,19 @@ export function App() {
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="flex flex-col min-h-0">
 
-          {/* Visualization */}
-          <section className="w-full" style={{ minHeight: '160px', maxHeight: '28vh' }}>
-            <Visualization
-              humanFeatures={features}
-              aiDecision={aiDecision}
-              aiMode={aiMode}
-              harmonicTension={harmonicTension}
-              energyLevel={energyLevel}
-              isActive={isPlaying}
-            />
-          </section>
+          {/* Visualization — collapsible */}
+          {showVisualization && (
+            <section className="w-full" style={{ minHeight: '120px', maxHeight: '25vh' }}>
+              <Visualization
+                humanFeatures={features}
+                aiDecision={aiDecision}
+                aiMode={aiMode}
+                harmonicTension={harmonicTension}
+                energyLevel={energyLevel}
+                isActive={isPlaying}
+              />
+            </section>
+          )}
 
           {/* Chord Display — always visible, prominent */}
           <section className="px-3 sm:px-5 pt-3">
@@ -322,7 +355,7 @@ export function App() {
             />
           </section>
 
-          {/* Harmony panel — shown for suggest mode or when toggled */}
+          {/* Harmony panel — shown for suggest mode or toggled */}
           {isHarmonyVisible && (
             <section className="px-3 sm:px-5 pt-2">
               <HarmonyPanel
@@ -342,10 +375,11 @@ export function App() {
               currentNoteName={features?.noteName ?? ''}
               isActive={isPlaying}
               midiControllerNote={midiNote}
+              suggestedNotes={suggestedNotes}
             />
           </section>
 
-          {/* Info panels */}
+          {/* Info panels — side by side on desktop, stacked on mobile */}
           <section className="px-3 sm:px-5 pt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
 
             {/* Human side */}
@@ -410,7 +444,7 @@ export function App() {
                   </div>
                 )}
 
-                {/* Harmony toggle button */}
+                {/* Harmony toggle */}
                 <button
                   onClick={() => setShowHarmony((v) => !v)}
                   className="text-[10px] uppercase tracking-widest px-2 py-1.5 rounded border transition-colors cursor-pointer focus:outline-none text-left"
@@ -421,7 +455,7 @@ export function App() {
                     color: isHarmonyVisible ? '#FFD54F' : '#444455',
                   }}
                 >
-                  {isHarmonyVisible ? '▾ Hide harmony' : '▸ Show harmony / suggestions'}
+                  {isHarmonyVisible ? '▾ Hide harmony guide' : '▸ Show harmony / circle of fifths'}
                 </button>
 
                 {/* Tension */}
@@ -446,7 +480,7 @@ export function App() {
                   </div>
                 </div>
 
-                {/* Last AI notes (only for sound modes) */}
+                {/* Last AI notes (sound modes only) */}
                 {!isPassiveMode && (
                   <div className="border-t border-[#1A1A25] pt-2 flex flex-col gap-1">
                     <span className="text-[10px] uppercase tracking-widest text-[#444444]" style={{ fontFamily: 'var(--font-body)' }}>Last Notes</span>
@@ -479,12 +513,12 @@ export function App() {
             </div>
           </section>
 
-          {/* Bottom spacer for footer */}
+          {/* Bottom spacer */}
           <div className="h-4" />
         </div>
       </main>
 
-      {/* ── Controls footer (sticky bottom) ── */}
+      {/* ── Controls footer ── */}
       <footer className="flex-none border-t border-[#12121A] bg-[#0D0D15] px-3 sm:px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 flex flex-col gap-2.5">
 
         {/* Mode selector (collapsible) */}
@@ -495,7 +529,7 @@ export function App() {
           onAiToggle={handleAiToggle}
         />
 
-        {/* Sliders — only show for AI modes with audio output */}
+        {/* Sliders — only for AI modes */}
         {!isPassiveMode && (
           <div className="grid grid-cols-2 gap-4">
             <IntensitySlider value={intensity} onChange={handleIntensityChange} />

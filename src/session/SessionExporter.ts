@@ -46,34 +46,42 @@ function uint16BE(value: number): number[] {
   return [(value >>> 8) & 0xff, value & 0xff];
 }
 
+/** Encode a string as ASCII bytes */
+function asciiBytes(str: string): number[] {
+  return Array.from(str, (ch) => ch.charCodeAt(0));
+}
+
 interface MidiEvent {
   tick: number;
   bytes: number[];
 }
 
 /**
- * Builds a minimal but spec-compliant MIDI file (format 0, single track) from
- * the session's AI events. Each AIDecision produces one note-on / note-off pair
- * per NoteEvent in its `notes` array.
+ * Builds a Standard MIDI File (format 0, single track) compatible with
+ * GarageBand, Logic Pro, and other major DAWs.
  *
- * Timing model:
- *   - Resolution: 480 ticks per quarter note (standard).
- *   - Tempo: 500 000 µs/beat (120 BPM) encoded as a Set Tempo meta event.
- *   - NoteEvent.duration is treated as milliseconds; converted to ticks.
- *   - Session-relative time (ms) → ticks: ticks = ms * (resolution / msPerBeat).
+ * Includes:
+ * - Track name meta event
+ * - Tempo meta event (120 BPM default, or detected)
+ * - Program change (electric bass = GM program 33)
+ * - Proper Note On / Note Off events (0x90/0x80)
+ * - End of track marker
+ *
+ * Timing: 480 ticks/beat, 120 BPM default.
+ * NoteEvent.duration in ms → ticks.
  */
-export function exportMIDI(data: SessionData): Blob {
+export function exportMIDI(data: SessionData, detectedBPM?: number): Blob {
   const TICKS_PER_BEAT = 480;
-  const TEMPO_US = 500_000; // 120 BPM
-  const MS_PER_BEAT = TEMPO_US / 1_000; // 500 ms
-  const TICKS_PER_MS = TICKS_PER_BEAT / MS_PER_BEAT; // 0.96 ticks/ms
+  const bpm = detectedBPM && detectedBPM > 30 && detectedBPM < 300 ? detectedBPM : 120;
+  const TEMPO_US = Math.round(60_000_000 / bpm);
+  const MS_PER_BEAT = TEMPO_US / 1_000;
+  const TICKS_PER_MS = TICKS_PER_BEAT / MS_PER_BEAT;
   const MIDI_CHANNEL = 0x00; // channel 1
 
   function msToTicks(ms: number): number {
     return Math.round(ms * TICKS_PER_MS);
   }
 
-  // Clamp MIDI values to 0–127
   function clamp7(v: number): number {
     return Math.max(0, Math.min(127, Math.round(v)));
   }
@@ -86,73 +94,90 @@ export function exportMIDI(data: SessionData): Blob {
 
     for (const note of decision.notes) {
       const pitch = clamp7(note.pitch);
-      const velocity = clamp7(note.velocity > 0 ? note.velocity : decision.velocity * 127);
+      const velocity = clamp7(
+        note.velocity > 1 ? note.velocity : (note.velocity > 0 ? note.velocity * 127 : decision.velocity * 127),
+      );
       const durationTicks = Math.max(1, msToTicks(note.duration));
 
-      // Note On
+      // Note On (0x90)
       events.push({
         tick: baseTick,
-        bytes: [0x90 | MIDI_CHANNEL, pitch, velocity],
+        bytes: [0x90 | MIDI_CHANNEL, pitch, Math.max(1, velocity)],
       });
 
-      // Note Off (using note-on with velocity 0 — universally supported)
+      // Note Off (0x80) — explicit note-off is better for DAW compatibility
       events.push({
         tick: baseTick + durationTicks,
-        bytes: [0x90 | MIDI_CHANNEL, pitch, 0x00],
+        bytes: [0x80 | MIDI_CHANNEL, pitch, 0x40], // release velocity 64
       });
     }
   }
 
-  // Sort by tick, then note-off before note-on at the same tick to avoid
-  // stuck notes when two notes share an endpoint.
+  // Sort: by tick, then note-off before note-on at same tick
   events.sort((a, b) => {
     if (a.tick !== b.tick) return a.tick - b.tick;
-    // note-off (velocity byte 0) sorts before note-on
-    const aOff = a.bytes[2] === 0 ? 0 : 1;
-    const bOff = b.bytes[2] === 0 ? 0 : 1;
-    return aOff - bOff;
+    // 0x80 (note off) before 0x90 (note on)
+    const aIsOff = ((a.bytes[0] ?? 0) & 0xf0) === 0x80 ? 0 : 1;
+    const bIsOff = ((b.bytes[0] ?? 0) & 0xf0) === 0x80 ? 0 : 1;
+    return aIsOff - bIsOff;
   });
 
-  // ── Convert to delta-tick stream ──────────────────────────────────────────
+  // ── Build track data ─────────────────────────────────────────────────────
   const trackBytes: number[] = [];
+
+  // 1. Track name meta event: FF 03 len "Man & Machine"
+  const trackName = asciiBytes('Man & Machine');
+  trackBytes.push(...writeVLQ(0)); // delta = 0
+  trackBytes.push(0xff, 0x03, trackName.length, ...trackName);
+
+  // 2. Set Tempo meta event: FF 51 03 tt tt tt
+  trackBytes.push(...writeVLQ(0));
+  trackBytes.push(0xff, 0x51, 0x03, ...uint32BE(TEMPO_US).slice(1));
+
+  // 3. Time signature: FF 58 04 04 02 18 08 (4/4 time)
+  trackBytes.push(...writeVLQ(0));
+  trackBytes.push(0xff, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08);
+
+  // 4. Program change: Electric Bass (Finger) = GM program 33 (0-indexed = 33)
+  trackBytes.push(...writeVLQ(0));
+  trackBytes.push(0xc0 | MIDI_CHANNEL, 33);
+
+  // 5. Control Change: bank select (for maximum DAW compatibility)
+  trackBytes.push(...writeVLQ(0));
+  trackBytes.push(0xb0 | MIDI_CHANNEL, 0x00, 0x00); // Bank MSB = 0
+  trackBytes.push(...writeVLQ(0));
+  trackBytes.push(0xb0 | MIDI_CHANNEL, 0x20, 0x00); // Bank LSB = 0
+
+  // 6. Set volume to reasonable level
+  trackBytes.push(...writeVLQ(0));
+  trackBytes.push(0xb0 | MIDI_CHANNEL, 0x07, 100); // CC7 volume = 100
+
+  // 7. Note events
   let currentTick = 0;
-
-  // Set Tempo meta event (delta=0)
-  // FF 51 03 tt tt tt
-  trackBytes.push(...writeVLQ(0)); // delta time
-  trackBytes.push(0xff, 0x51, 0x03, ...uint32BE(TEMPO_US).slice(1)); // 3-byte tempo
-
   for (const event of events) {
-    const delta = event.tick - currentTick;
+    const delta = Math.max(0, event.tick - currentTick);
     currentTick = event.tick;
     trackBytes.push(...writeVLQ(delta), ...event.bytes);
   }
 
-  // End of Track meta event
-  trackBytes.push(...writeVLQ(0)); // delta time
+  // 8. End of Track: FF 2F 00
+  trackBytes.push(...writeVLQ(0));
   trackBytes.push(0xff, 0x2f, 0x00);
 
   // ── Assemble MIDI file ────────────────────────────────────────────────────
 
-  // MThd chunk — Header
+  // MThd chunk
   const header: number[] = [
-    // Chunk type "MThd"
-    0x4d, 0x54, 0x68, 0x64,
-    // Chunk length = 6
-    ...uint32BE(6),
-    // Format 0 (single track)
-    ...uint16BE(0),
-    // Number of tracks = 1
-    ...uint16BE(1),
-    // Ticks per quarter note
+    0x4d, 0x54, 0x68, 0x64, // "MThd"
+    ...uint32BE(6),           // chunk length = 6
+    ...uint16BE(0),           // format 0
+    ...uint16BE(1),           // 1 track
     ...uint16BE(TICKS_PER_BEAT),
   ];
 
-  // MTrk chunk — Track
+  // MTrk chunk
   const trackChunk: number[] = [
-    // Chunk type "MTrk"
-    0x4d, 0x54, 0x72, 0x6b,
-    // Chunk length
+    0x4d, 0x54, 0x72, 0x6b, // "MTrk"
     ...uint32BE(trackBytes.length),
     ...trackBytes,
   ];
@@ -165,7 +190,6 @@ export function exportMIDI(data: SessionData): Blob {
 
 /**
  * Triggers a browser download of `blob` with the given filename.
- * The anchor element is created, clicked, and immediately removed.
  */
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -178,6 +202,5 @@ export function downloadBlob(blob: Blob, filename: string): void {
   anchor.click();
   document.body.removeChild(anchor);
 
-  // Release the object URL after a short delay to ensure the download starts
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
